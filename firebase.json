@@ -3,7 +3,8 @@
     "public": "out",
     "cleanUrls": true,
     "trailingSlash": true,
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**", "**/*.txt"],
+    "//": "Do not add **/*.txt here. It looks like it only drops Next's RSC payloads (__next.*.txt, index.txt) but it also drops robots.txt, and it would silently break client-side prefetch if a second route is ever added.",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "headers": [
       {
         "//": "MUST stay first. cleanUrls serves pages at directory URLs (/, /404/), which a **/*.html glob does not match — without this baseline the homepage silently falls through to Firebase's max-age=3600 default. Firebase applies every matching rule and the LAST wins per header key, so the asset rules below override only Cache-Control.",
