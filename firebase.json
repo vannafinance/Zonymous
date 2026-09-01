@@ -1,0 +1,42 @@
+{
+  "hosting": {
+    "public": "out",
+    "cleanUrls": true,
+    "trailingSlash": true,
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**", "**/*.txt"],
+    "headers": [
+      {
+        "//": "MUST stay first. cleanUrls serves pages at directory URLs (/, /404/), which a **/*.html glob does not match — without this baseline the homepage silently falls through to Firebase's max-age=3600 default. Firebase applies every matching rule and the LAST wins per header key, so the asset rules below override only Cache-Control.",
+        "source": "**",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" },
+          { "key": "X-Content-Type-Options", "value": "nosniff" },
+          { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+          { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
+          { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()" },
+          { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload" }
+        ]
+      },
+      {
+        "//": "Content-hashed by the Next build — safe to pin forever.",
+        "source": "/_next/static/**",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+        ]
+      },
+      {
+        "//": "Filenames carry the source asset's uuid, so they change when the font does.",
+        "source": "/fonts/**",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+        ]
+      },
+      {
+        "source": "**/*.@(jpg|jpeg|png|gif|webp|avif|svg|ico)",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }
+        ]
+      }
+    ]
+  }
+}
