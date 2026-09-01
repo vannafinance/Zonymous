@@ -1,95 +1,142 @@
 # DNS migration — zonymouslabs.com off Vercel
 
-**Status: not started.** Both apex and `www` return `402 DEPLOYMENT_DISABLED`
-— the site is down, not merely at risk.
+**Status: zone built, records not yet imported, nameservers not yet switched.**
+The live site is still down — apex and `www` both return `402
+DEPLOYMENT_DISABLED` from Vercel.
 
-The Vercel team "Vanna Group" is blocked, and the Vercel DNS panel refuses all
-edits (`npx vercel dns ls` fails with a permissions error). Records therefore
-**cannot** be changed in Vercel. The only way out is changing nameservers at
-the registrar, which bypasses Vercel entirely.
+The Vercel team "Vanna Group" is blocked. Records therefore cannot be relied on
+being changeable in Vercel; the way out is changing nameservers at the
+registrar, which bypasses Vercel entirely.
 
-`vanna.finance` was already migrated this way; the same playbook applies.
+## Progress
 
-## What's there now
-
-Verified by live query, not assumed.
-
-| | |
+| Step | |
 |---|---|
-| Registrar | **Spaceship, Inc.** — *not* Namecheap, which is vanna.finance |
-| Nameservers | `ns1.vercel-dns.com`, `ns2.vercel-dns.com` |
-| Domain status | `clientTransferProhibited` — blocks registrar transfers, **not** nameserver changes |
-| Apex A | Vercel IPs, to be replaced |
-| Email | **Spacemail** — `mx1.spacemail.com`, `mx2.spacemail.com` |
-| SPF | `v=spf1 include:spf.spacemail.com ~all` |
-| DKIM | present, selector `spacemail` (408 chars) |
-| DMARC | **absent** — worth adding during the migration |
-| CAA | allows `pki.goog`, `letsencrypt.org`, `sectigo.com` — Firebase certs will issue |
+| 1. Capture the Vercel DNS record list | done |
+| 2. Verify every value by live query | done |
+| 3. Deploy to Firebase Hosting | done — `zonymous-website.web.app` |
+| 4. Build the Cloud DNS zone | zone created; **records not imported yet** |
+| 5. Verify against the new nameservers | blocked on 4 |
+| 6. Switch nameservers at Spaceship | needs registrar access |
+| 7. Wait 2–3 days | |
+| 8. Clean up Vercel | |
 
-**A wildcard `*` record exists.** `zzq9xrandom.zonymouslabs.com` resolves, so
-every probed subdomain returns Vercel IPs and real subdomains cannot be
-distinguished from wildcard hits from outside. Do not build the zone from
-guesses.
+## The new nameservers
 
-The DKIM value is currently only retrievable from Vercel's DNS, and that
-account is blocked. It is recoverable from the Spacemail panel if lost, but
-painfully — capture it before touching anything.
+```
+ns-cloud-b1.googledomains.com.
+ns-cloud-b2.googledomains.com.
+ns-cloud-b3.googledomains.com.
+ns-cloud-b4.googledomains.com.
+```
 
-## Order of operations
-
-The one thing not to get wrong.
-
-1. **Screenshot the full Vercel DNS record list** (Domains → zonymouslabs.com →
-   DNS Records). Capture Name, Type, Value, TTL, Priority for every row. The
-   wildcard makes this the only source of truth.
-2. **Verify every value with a DNS query.** Never transcribe from a screenshot
-   — on vanna.finance an `_acme-challenge` value rendered as `8el` when the
-   real value was `8eI` (capital i).
-3. **Deploy to Firebase Hosting** and confirm on `zonymous-website.web.app`.
-4. **Build the Cloud DNS zone** with every record, including MX, SPF and DKIM.
-5. **Query the new nameservers directly** and confirm MX/SPF/DKIM answer
-   correctly — *before* switching.
-6. **Only then change nameservers at Spaceship.**
-7. Wait 2–3 days of everything working.
-8. Only then clean up anything in Vercel.
-
-> **Never remove the domain from Vercel before step 6.** Vercel's nameservers
-> stay authoritative until then. Deleting the zone would take down DNS for the
-> whole domain — website *and email*.
-
-`www` redirects to the apex; the apex is canonical. Set that up when adding the
-custom domain in the Firebase console, not in `firebase.json` — Firebase
-redirects are path-based, not host-based.
-
-Cloud DNS nameservers are assigned per zone. Read them with
-`gcloud dns managed-zones describe <zone> --format="value(nameServers)"` — do
-not reuse vanna.finance's (`ns-cloud-e1..e4`), they may differ.
-
-## Commands
-
-`dig` is unavailable on Windows. Use `nslookup` or DNS-over-HTTPS. `nslookup`
-cannot query CAA — read CAA from `dns.google` or `gcloud`.
+These are **not** vanna.finance's (`ns-cloud-e1..e4`). Cloud DNS assigns them
+per zone. Read them back with:
 
 ```bash
-# any record, authoritative, no auth needed
-curl -s "https://dns.google/resolve?name=zonymouslabs.com&type=MX"
-
-# registrar / delegation
-curl -s -A "Mozilla/5.0" https://rdap.verisign.com/com/v1/domain/zonymouslabs.com
-
-# query the new zone BEFORE switching nameservers
-nslookup -type=MX zonymouslabs.com ns-cloud-XX.googledomains.com
-
-# create + populate the zone
-gcloud dns managed-zones create <zone> --dns-name="zonymouslabs.com." --visibility=public
-gcloud dns record-sets import <file>.zone --zone=<zone> --zone-file-format
-gcloud dns record-sets list --zone=<zone> --format="table(name,type,ttl,rrdatas.list())"
+gcloud dns managed-zones describe zonymouslabs-com \
+  --project=zonymous-website --format="value(nameServers)"
 ```
+
+## What changes, and what doesn't
+
+**`www` and the apex swap roles.** Vercel currently serves the site at
+`www.zonymouslabs.com` and 301s the apex to it. After the migration the **apex
+is canonical** and `www` 301s to it. There is no SEO cost worth worrying about
+— the site has been down and was never indexed in earnest — but it is a real
+behaviour change, not a like-for-like move.
+
+**The wildcard goes away.** Vercel had `*  ALIAS  cname.vercel-dns-017.com.`,
+which is why every probed subdomain resolved and why subdomain enumeration
+from outside was impossible. It exists only to route arbitrary names to Vercel,
+so it is not carried over. That has one consequence worth spelling out: `www`
+had **no record of its own** — it was resolving through the wildcard. It now
+has an explicit CNAME.
+
+**Email is untouched.** MX, SPF and the `spacemail` DKIM key carry over
+byte-for-byte.
+
+## The zone
+
+Generated by [`infra/dns/build-zone.mjs`](../infra/dns/build-zone.mjs) into
+`infra/dns/zonymouslabs.com.zone`. Edit the script, not the zone file.
+
+| Name | Type | Value | Source |
+|---|---|---|---|
+| `@` | A | `199.36.158.100` | Firebase Hosting |
+| `www` | CNAME | `zonymous-website.web.app.` | Firebase Hosting |
+| `@` | MX | `0 mx1.spacemail.com.` | carried over |
+| `@` | MX | `0 mx2.spacemail.com.` | carried over |
+| `@` | TXT | `v=spf1 include:spf.spacemail.com ~all` | carried over |
+| `spacemail._domainkey` | TXT | DKIM, 408 chars → 2 strings | carried over |
+| `@` | TXT | `hosting-site=zonymous-website` | Firebase ownership |
+| `_acme-challenge` | TXT | `1UvoRbs6uiQ…` | Firebase cert |
+| `_acme-challenge.www` | TXT | `usePORnU_a…` | Firebase cert |
+| `@` | CAA | `0 issue "pki.goog"` | carried over |
+| `@` | CAA | `0 issue "letsencrypt.org"` | carried over |
+| `@` | CAA | `0 issue "sectigo.com"` | carried over |
+
+TTL is 300 everywhere while migrating, so a mistake is quick to undo. Raise it
+once things have been stable for a few days.
+
+### Never transcribe a DNS value from a screenshot
+
+The DKIM key contains `…kiG9w0BAQEFAAOCAQ8A…` — that is a **zero**. The Vercel
+panel's font renders it as `9wOB` with a capital O. Copying what the screen
+appears to say would break signing on every outgoing mail, silently. The same
+trap hit vanna.finance, where `_acme-challenge.docs` rendered `8el` for a real
+value of `8eI` (capital i).
+
+Every value in the zone file was read from a live DNS query or the Firebase
+Hosting API. Keep it that way.
+
+## Remaining steps
+
+### 4. Import the records
+
+```bash
+gcloud dns record-sets import infra/dns/zonymouslabs.com.zone \
+  --project=zonymous-website --zone=zonymouslabs-com --zone-file-format
+```
+
+### 5. Verify against the new nameservers, before switching
+
+This is the step that catches mistakes while they are still free. Query the
+Cloud DNS nameservers directly — the domain is still delegated to Vercel, so
+these answers are not live yet.
+
+```bash
+for t in A MX TXT CAA; do
+  nslookup -type=$t zonymouslabs.com ns-cloud-b1.googledomains.com
+done
+nslookup -type=CNAME www.zonymouslabs.com ns-cloud-b1.googledomains.com
+nslookup -type=TXT spacemail._domainkey.zonymouslabs.com ns-cloud-b1.googledomains.com
+```
+
+MX, SPF and DKIM must all answer correctly before going any further. `nslookup`
+cannot query CAA — read that back with `gcloud dns record-sets list`.
+
+### 6. Switch nameservers at Spaceship
+
+Replace `ns1.vercel-dns.com` / `ns2.vercel-dns.com` with the four
+`ns-cloud-b*.googledomains.com` names. The domain's `clientTransferProhibited`
+status blocks registrar *transfers*, not nameserver changes.
+
+Firebase finishes ownership verification and provisions certs on its own once
+the records are live.
+
+> **Never remove the domain from Vercel before this step.** Vercel's
+> nameservers stay authoritative until then. Deleting the zone would take down
+> DNS for the whole domain — website *and email*.
 
 ## Open items
 
 - **Who can change nameservers in the Spaceship panel?** The founder holds
   registrar access.
+- **DMARC is still absent.** `_dmarc` has no record. Worth adding
+  `v=DMARC1; p=none; rua=mailto:<mailbox>` in monitor mode, but it needs a
+  mailbox that someone will actually read, so it is left out of the zone until
+  that is decided.
 - **Does anything other than Spacemail send mail for this domain** (Mailchimp,
-  SendGrid, HubSpot)? The current SPF authorises only `spf.spacemail.com`, so
-  any other sender is already soft-failing and would need adding.
+  SendGrid, HubSpot)? The SPF authorises only `spf.spacemail.com`, so any other
+  sender is already soft-failing — that is pre-existing, not caused by the move.
