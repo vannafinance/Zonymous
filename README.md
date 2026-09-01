@@ -1,266 +1,65 @@
 # zonymouslabs.com
 
-Marketing site for Zonymous Labs — a single static page. Next.js 16 App Router,
-exported statically, served from Firebase Hosting in the GCP project
-`zonymous-website`.
+Marketing site for Zonymous Labs. One static page — Next.js 16 App Router,
+exported statically, served from Firebase Hosting.
 
----
-
-## Quick start
+## Run it
 
 ```bash
 npm install
-npm run dev      # http://localhost:3000
+npm run dev        # http://localhost:3000
 ```
 
-| Script | What it does |
+| Script | |
 |---|---|
-| `npm run dev` | Dev server with Turbopack |
+| `npm run dev` | Dev server |
 | `npm run build` | Static export into `./out` |
-| `npm start` | Serve `./out` exactly as production will |
-| `npm run deploy` | `build` + `firebase deploy --only hosting` |
-| `npx tsc --noEmit` | Typecheck without building |
+| `npm start` | Serve `./out` as production will |
+| `npm run deploy` | `build` + deploy to Firebase Hosting |
+| `npx tsc --noEmit` | Typecheck |
 
-Always sanity-check with `npm start`, not just `npm run dev`. The dev server
-resolves routes that the static export does not.
-
----
+Check with `npm start` before deploying, not just `npm run dev` — the dev
+server resolves things the static export does not.
 
 ## Layout
 
 ```
-app/
-  layout.tsx        metadata, JSON-LD, noscript reveal fallback
-  page.tsx          composes the 18 sections in order
-  globals.css       @font-face blocks + keyframes, extracted from the original
-  robots.ts         -> /robots.txt
-  sitemap.ts        -> /sitemap.xml
-  icon.svg          favicon
-components/         18 section components, one per band of the page
+app/          layout (metadata, JSON-LD), page, globals.css, robots, sitemap
+components/   18 section components, one per band of the page
 lib/
-  site.ts           name, url, description — single source for all metadata
-  diagram.ts        shared SVG helpers (el, mk, linePath, vbX, makeDrag, timers)
-  hooks/            one hook per interactive diagram, plus useReveal
-  hoverHandlers.ts  nav/CTA hover affordances
-public/fonts/       13 self-hosted woff2 subsets
-reference/          the original bundle and everything extracted from it
-scripts/            the one-shot conversion, kept reproducible
+  site.ts     name/url/description — single source for all metadata
+  diagram.ts  shared SVG helpers
+  hooks/      one hook per interactive diagram, plus useReveal
+public/fonts/ 13 self-hosted woff2 subsets
+reference/    the original design-canvas bundle it was converted from
+scripts/      the one-shot conversion
+docs/         deployment and DNS runbooks
 ```
 
-### Server vs client components
+## Before you edit
 
-Eight sections are server components and ship **no JavaScript**:
-`Automation`, `Capabilities`, `Engagements`, `Footer`, `GlobalReach`,
-`Pillars`, `SelectedWork`, `Writing`.
+**Eight sections ship no JavaScript.** `Automation`, `Capabilities`,
+`Engagements`, `Footer`, `GlobalReach`, `Pillars`, `SelectedWork` and `Writing`
+are server components. Adding an event handler or a hook to one turns it into a
+client component and ships its markup twice.
 
-Ten are client components — `Nav`, `Hero` and `ContactCta` only because of
-hover handlers; `SeeItWork`, `ReliabilityCliff`, `Embeddings`, `MarginalAgent`,
-`ConvergencePrinciple`, `CalibrationGate` and `Attention` because each drives
-an interactive SVG diagram.
+**`scripts/` regenerates `components/` and discards hand edits.** The page was
+converted from a design-canvas bundle by script rather than by hand, so 105KB
+of inline-styled markup and SVG survived intact. Once design work moves into
+the React code, delete the scripts rather than fight them.
 
-Keep it that way. Adding an event handler or a hook to one of the eight turns
-it into a client component and ships its markup to the browser twice.
+**Don't remove the `<noscript>` block in `app/layout.tsx`.** 40 elements ship at
+`opacity:0` and are lifted by an IntersectionObserver. Without that rule the
+page reads as blank to anything that doesn't run JavaScript.
 
-### Why the diagrams use `getElementById`
+**Don't reorder the `firebase.json` headers.** The first entry must stay first
+and must stay `"**"` — [docs/deploy.md](docs/deploy.md) explains why.
 
-The diagrams address nodes by id because that is how the hand-authored SVG is
-written — roughly 90 addressed nodes across six diagrams. Threading a ref to
-each would add a lot of noise on a single-page document where the ids are
-already unique. The lookups live inside `useEffect`, so they never run during
-prerender.
+**Inline styles are intentional.** Converting 105KB of them to Tailwind by hand
+is a large surface for visual drift. Do it per-section when a section gets
+reworked, not in one pass.
 
----
+## Docs
 
-## Architecture decisions
-
-**Next.js static export, not a Vite SPA.** The page is one route with no data
-fetching, so Next's routing and server features are unused. It was still the
-right pick: a Vite SPA serves an empty HTML shell and assembles the content in
-the browser, which is bad for a marketing page that AI and social crawlers read
-without running JavaScript. Next prerenders the content into the HTML for free,
-gives the Metadata API, and leaves a paved road for the blog the design already
-signposts. `output: 'export'` keeps the result a plain static directory.
-
-**Firebase Hosting, not GCS + Load Balancer + Cloud CDN.** Both are GCP;
-Firebase Hosting lives inside the same `zonymous-website` project. The load
-balancer path costs roughly **$18/month in forwarding-rule fees before anyone
-visits** and needs six resources. Firebase has no fixed cost, a real free tier,
-one config file, and atomic deploys with `firebase hosting:rollback`. The
-crossover measured for vanna.finance is about **3,460 visits/day (~104k/month)**
-— past that, cheaper egress beats the fixed fee. Revisit if traffic gets there,
-or if Cloud Armor, geo-restrictions or signed URLs are needed.
-
-**Inline styles kept as-is.** The original is 105KB of inline-styled markup.
-Translating it to Tailwind or CSS Modules by hand is a large surface for visual
-drift with no functional gain. Convert incrementally if and when sections get
-reworked.
-
----
-
-## Where this code came from
-
-The site was authored as a design canvas: a single self-extracting
-`index.html` holding an `<x-dc>` template plus base64/gzip-encoded fonts and a
-runtime that rendered it in the browser. It is preserved verbatim at
-`reference/original-bundle.html`.
-
-The conversion is **scripted, not hand-typed**, so the markup and SVG survive
-without transcription drift:
-
-```bash
-node scripts/extract-assets.mjs    # bundle -> public/fonts + app/globals.css
-node scripts/html-to-jsx.mjs       # template -> components/*.tsx
-node scripts/wire-components.mjs   # add 'use client' + hook calls
-```
-
-> **Re-running these regenerates `components/` and discards hand edits.**
-> Once design work moves into the React code, delete the scripts rather than
-> fight them. `reference/extracted/` holds the inputs they read.
-
-Three things changed deliberately in the port:
-
-- **`initLoop()` was dropped.** It was never called from `componentDidMount`,
-  and none of the ids it addressed (`loopSvg`, `lpRing`, `lpSettleBox`, …)
-  exist in the markup.
-- **Drag teardown removes the overlay's own listeners**, not just the window's.
-  The original leaked `mousedown`/`touchstart` on every unmount.
-- **The timer registry prunes fired timeouts.** The looping diagrams schedule a
-  few hundred per cycle and the original array grew without bound.
-
-### Converter gotchas worth knowing
-
-Both were real bugs caught in review, and both are fixed in
-`scripts/html-to-jsx.mjs`:
-
-- **Inline whitespace is significant.** `trim()`-ing text nodes silently
-  deleted the space in `meets <span>value</span>` — 37 places across the page.
-  Whitespace containing a newline is source indentation and is dropped;
-  whitespace without one is a real space and comes back as `{' '}`.
-- **Duplicate CSS declarations are legal, duplicate object keys are not.** The
-  source repeats properties within one `style` attribute and relies on last-wins.
-  The converter dedupes through a `Map`.
-
-The whitespace classes deliberately exclude U+00A0 — the markup uses `&nbsp;`
-as real content and both `\s` and `String.trim()` would eat it.
-
----
-
-## SEO
-
-The static export is the point: content is prerendered into `out/index.html`
-rather than assembled client-side, so crawlers that do not run JavaScript still
-see it. On top of that:
-
-- canonical URL, OG and Twitter card metadata (`app/layout.tsx`)
-- `ProfessionalService` JSON-LD including the three engagements
-- `robots.txt` and `sitemap.xml` generated at build time
-- semantic landmarks and heading order preserved from the original
-
-**Scroll-reveal caveat.** 40 elements ship at `opacity:0` and are lifted by an
-IntersectionObserver. Without JavaScript the page would read as blank, so
-`app/layout.tsx` carries a `<noscript>` rule forcing them visible. Do not
-remove it.
-
-**Still missing:** there is no `og:image`. `twitter:card` is set to
-`summary_large_image`, so link previews currently render without artwork.
-
----
-
-## Deploying
-
-`out/` is a plain static directory — no SSR, no API routes, no middleware.
-
-```bash
-npm install -g firebase-tools    # not currently installed
-firebase login
-firebase projects:list           # confirm zonymous-website is visible
-npm run deploy
-```
-
-If `zonymous-website` does not appear, Firebase has not been enabled for the
-Workspace domain that owns it. A super admin turns it on at
-**admin.google.com → Apps → Additional Google services → Firebase → ON**.
-After that, `firebase projects:addfirebase` may still return 403 — that is
-expected and unnecessary. If the project shows in `projects:list`, just deploy.
-
-Verify on `https://zonymous-website.web.app` before touching DNS.
-
-### The cache-header rule that must not move
-
-The first `headers` entry in `firebase.json` must stay first and must stay
-`"**"`. `cleanUrls` serves pages at directory URLs (`/`, `/404/`), which an
-`**/*.html` glob does **not** match — without the catch-all the homepage
-silently falls through to Firebase's `max-age=3600` default. Firebase applies
-every matching rule and the **last wins per header key**, so the asset rules
-that follow override only `Cache-Control` and leave the security headers intact.
-
----
-
-## DNS migration — zonymouslabs.com off Vercel
-
-**Status: not started.** The site is currently **down** — the Vercel team is
-blocked and both apex and `www` return `402 DEPLOYMENT_DISABLED`. Vercel's DNS
-panel refuses all edits, so records cannot be changed there. The only way out
-is changing nameservers at the registrar.
-
-| | |
-|---|---|
-| Registrar | **Spaceship, Inc.** (not Namecheap — that is vanna.finance) |
-| Nameservers | `ns1.vercel-dns.com`, `ns2.vercel-dns.com` |
-| Status | `clientTransferProhibited` — blocks registrar transfers, **not** nameserver changes |
-| Email | **Spacemail** (`mx1`/`mx2.spacemail.com`), with SPF and a `spacemail` DKIM selector |
-| `_dmarc` | absent — worth adding during the migration |
-| `www` | to be redirected to the apex; the apex is canonical |
-
-### Order of operations
-
-1. **Screenshot the full Vercel DNS record list.** A wildcard `*` record exists,
-   so every probed subdomain resolves and enumeration from outside is
-   impossible. The panel is the only source of truth.
-2. **Verify every value with a DNS query** — never transcribe from a screenshot.
-   A `_acme-challenge` value on vanna.finance rendered as `8el` when the real
-   value was `8eI` (capital i).
-3. Deploy to Firebase Hosting and confirm on `zonymous-website.web.app`.
-4. Build the Cloud DNS zone with **every** record, including MX, SPF and DKIM.
-5. **Query the new nameservers directly** and confirm MX/SPF/DKIM answer
-   correctly, before switching.
-6. Only then change nameservers at Spaceship.
-7. Wait 2–3 days of everything working.
-8. Only then clean up anything in Vercel.
-
-> **Never remove the domain from Vercel before step 6.** Vercel's nameservers
-> stay authoritative until then; deleting the zone would take down DNS for the
-> whole domain — website *and email*.
-
-Cloud DNS nameservers are assigned per zone. Read them with
-`gcloud dns managed-zones describe <zone> --format="value(nameServers)"` —
-do not reuse vanna.finance's.
-
-### Useful commands
-
-`dig` is unavailable on Windows; use `nslookup` or DNS-over-HTTPS. `nslookup`
-cannot query CAA — read CAA from `dns.google` or `gcloud`.
-
-```bash
-# any record, authoritative, no auth needed
-curl -s "https://dns.google/resolve?name=zonymouslabs.com&type=MX"
-
-# registrar / delegation
-curl -s -A "Mozilla/5.0" https://rdap.verisign.com/com/v1/domain/zonymouslabs.com
-
-# query the new zone BEFORE switching nameservers
-nslookup -type=MX zonymouslabs.com ns-cloud-XX.googledomains.com
-
-# create + populate the zone
-gcloud dns managed-zones create <zone> --dns-name="zonymouslabs.com." --visibility=public
-gcloud dns record-sets import <file>.zone --zone=<zone> --zone-file-format
-gcloud dns record-sets list --zone=<zone> --format="table(name,type,ttl,rrdatas.list())"
-```
-
-### Open items
-
-- Who can change nameservers in the **Spaceship** panel? (Founder holds access.)
-- Is Firebase enabled for the Workspace domain that owns `zonymous-website`?
-- Does anything other than Spacemail send mail for this domain (Mailchimp,
-  SendGrid, HubSpot)? The current SPF authorises only `spf.spacemail.com`, so
-  any other sender is already soft-failing.
+- [docs/deploy.md](docs/deploy.md) — Firebase Hosting setup, the cache-header rule
+- [docs/dns-migration.md](docs/dns-migration.md) — moving the domain off Vercel
