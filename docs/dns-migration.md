@@ -1,8 +1,8 @@
 # DNS migration — zonymouslabs.com off Vercel
 
-**Status: zone built, records not yet imported, nameservers not yet switched.**
-The live site is still down — apex and `www` both return `402
-DEPLOYMENT_DISABLED` from Vercel.
+**Status: the zone is built, populated and verified. Only the nameserver
+switch is left, and that needs registrar access.** The live site is still down
+— apex and `www` both return `402 DEPLOYMENT_DISABLED` from Vercel.
 
 The Vercel team "Vanna Group" is blocked. Records therefore cannot be relied on
 being changeable in Vercel; the way out is changing nameservers at the
@@ -15,9 +15,9 @@ registrar, which bypasses Vercel entirely.
 | 1. Capture the Vercel DNS record list | done |
 | 2. Verify every value by live query | done |
 | 3. Deploy to Firebase Hosting | done — `zonymous-website.web.app` |
-| 4. Build the Cloud DNS zone | zone created; **records not imported yet** |
-| 5. Verify against the new nameservers | blocked on 4 |
-| 6. Switch nameservers at Spaceship | needs registrar access |
+| 4. Build the Cloud DNS zone | done — 11 record sets imported |
+| 5. Verify against the new nameservers | done — `infra/dns/verify.mjs` passes |
+| 6. Switch nameservers at Spaceship | **next — needs registrar access** |
 | 7. Wait 2–3 days | |
 | 8. Clean up Vercel | |
 
@@ -90,40 +90,76 @@ value of `8eI` (capital i).
 Every value in the zone file was read from a live DNS query or the Firebase
 Hosting API. Keep it that way.
 
-## Remaining steps
+## Verifying
 
-### 4. Import the records
+[`infra/dns/verify.mjs`](../infra/dns/verify.mjs) queries Vercel's nameserver
+and Cloud DNS's *directly*, so the new zone can be checked while the domain is
+still delegated to Vercel. It exits non-zero if anything that must carry over
+has changed.
 
 ```bash
+node infra/dns/verify.mjs
+```
+
+Last run before the switch:
+
+```
+SAME       MX   zonymouslabs.com                       mx1/mx2, both priority 0
+KEPT+ADDED TXT  zonymouslabs.com                       SPF intact, hosting-site added
+SAME       CAA  zonymouslabs.com                       letsencrypt / pki.goog / sectigo
+SAME       TXT  spacemail._domainkey.zonymouslabs.com  408 chars, byte-identical
+```
+
+Email is therefore unaffected by the move. The site records differ, which is
+the point of it. After the switch both sides answer identically.
+
+To rebuild the zone from scratch:
+
+```bash
+node infra/dns/build-zone.mjs
 gcloud dns record-sets import infra/dns/zonymouslabs.com.zone \
   --project=zonymous-website --zone=zonymouslabs-com --zone-file-format
 ```
 
-### 5. Verify against the new nameservers, before switching
+## The only step left — switch nameservers at Spaceship
 
-This is the step that catches mistakes while they are still free. Query the
-Cloud DNS nameservers directly — the domain is still delegated to Vercel, so
-these answers are not live yet.
+In the Spaceship panel for zonymouslabs.com, replace
 
-```bash
-for t in A MX TXT CAA; do
-  nslookup -type=$t zonymouslabs.com ns-cloud-b1.googledomains.com
-done
-nslookup -type=CNAME www.zonymouslabs.com ns-cloud-b1.googledomains.com
-nslookup -type=TXT spacemail._domainkey.zonymouslabs.com ns-cloud-b1.googledomains.com
+```
+ns1.vercel-dns.com
+ns2.vercel-dns.com
 ```
 
-MX, SPF and DKIM must all answer correctly before going any further. `nslookup`
-cannot query CAA — read that back with `gcloud dns record-sets list`.
+with
 
-### 6. Switch nameservers at Spaceship
+```
+ns-cloud-b1.googledomains.com
+ns-cloud-b2.googledomains.com
+ns-cloud-b3.googledomains.com
+ns-cloud-b4.googledomains.com
+```
 
-Replace `ns1.vercel-dns.com` / `ns2.vercel-dns.com` with the four
-`ns-cloud-b*.googledomains.com` names. The domain's `clientTransferProhibited`
-status blocks registrar *transfers*, not nameserver changes.
+The domain's `clientTransferProhibited` status blocks registrar *transfers*,
+not nameserver changes, so this is permitted.
 
-Firebase finishes ownership verification and provisions certs on its own once
-the records are live.
+Nothing else is required. Firebase finishes ownership verification and
+provisions certificates on its own once the records are live — both custom
+domains are already registered against the `zonymous-website` Hosting site and
+are sitting in `OWNERSHIP_MISSING` / `CERT_VALIDATING` waiting for exactly
+that. Do **not** add the domains again through the Firebase console; they
+would be duplicates.
+
+Propagation is usually minutes to a couple of hours. Watch it with:
+
+```bash
+node infra/dns/verify.mjs
+curl -sI https://zonymouslabs.com | head -3
+```
+
+> **Never remove the domain from Vercel before this step completes.** Vercel's
+> nameservers stay authoritative until the registrar change propagates.
+> Deleting the zone first would take down DNS for the whole domain — website
+> *and email*.
 
 > **Never remove the domain from Vercel before this step.** Vercel's
 > nameservers stay authoritative until then. Deleting the zone would take down
